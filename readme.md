@@ -4,12 +4,17 @@ This repository contains the **Exploratory Data Analysis (EDA)** performed for t
 The goal of this EDA is to understand the structure, distribution, and characteristics of the dataset—particularly the *anchor*, *text_a*, and *text_b* fields—and to visualize patterns that may support modeling decisions later.
 
 # Repository Structure
+```text
 .
-├── comprehensive_eda.py        # Main Python script containing all EDA code
-├── dev_track_a.jsonl           # Dataset (JSON Lines format)
-├── plots/                      # Folder containing all generated PDF plots
+├── comprehensive_eda.py        # Main EDA script containing all analysis & plots
+├── dev_track_a.jsonl           # SemEval Narrative Similarity dataset
 ├── requirements.txt            # Python dependencies
+├── plots/                      # Folder containing exported visualizations
+│   ├── plot_1.pdf
+│   ├── plot_2.pdf
+│   └── ...
 └── README.md                   # Project documentation
+```
 
 # Dataset Description
 
