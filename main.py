@@ -7,7 +7,7 @@ from torch.optim import AdamW
 import torch.nn as nn
 from transformers import AutoTokenizer
 from data_loader import load_and_split_data, TrackADataset
-from model_baseline_A import CrossEncoderBERT
+from model_baseline_B import CrossEncoderBERT
 import matplotlib.pyplot as plt
 import os
 
