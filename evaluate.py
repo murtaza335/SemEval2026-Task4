@@ -1,29 +1,63 @@
+import json
 import numpy as np
 import tensorflow as tf
+from sklearn.model_selection import train_test_split
 
-from data_loader import load_jsonl
-from preprocess import create_vectorizer
-from model_baseline_ayanre import build_model 
+def load_jsonl(path):
+    anchors, As, Bs, labels = [], [], [], []
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            obj = json.loads(line)
+            anchors.append(obj["anchor_text"])
+            As.append(obj["text_a"])
+            Bs.append(obj["text_b"])
+            labels.append(int(obj["text_a_is_closer"]))
+    return anchors, As, Bs, np.array(labels)
 
-TEST_PATH = "dev_track_a.jsonl"
-MODEL_PATH = "results/model_ayanre.h5"
-VOCAB_PATH = "results/vectorizer_vocab.npy"
-MAX_LEN = 300 
 
-anchors, As, Bs, labels = load_jsonl(TEST_PATH)
+anchors, As, Bs, labels = load_jsonl("dev_track_a.jsonl")
 
-vectorizer = create_vectorizer([], max_len=MAX_LEN)
-vocab = np.load(VOCAB_PATH, allow_pickle=True)
-vectorizer.set_vocabulary(vocab)
+(
+    _,
+    val_anchor,
+    _,
+    val_A,
+    _,
+    val_B,
+    _,
+    val_y
+) = train_test_split(
+    anchors, As, Bs, labels,
+    test_size=0.1,
+    random_state=42     
+)
 
-enc_anchors = vectorizer(tf.constant(anchors))
-enc_As      = vectorizer(tf.constant(As))
-enc_Bs      = vectorizer(tf.constant(Bs))
+vocab = np.load("results/vectorizer_vocab.npy", allow_pickle=True)
 
-model = tf.keras.models.load_model(MODEL_PATH)
+vectorize_layer = tf.keras.layers.TextVectorization(
+    output_mode="int",
+    output_sequence_length=300
+)
 
-preds = model.predict([enc_anchors, enc_As, enc_Bs], batch_size=32)
-preds = (preds > 0.5).astype(int).flatten()
+vectorize_layer.set_vocabulary(vocab)
 
-acc = (preds == labels).mean()
-print(f"Accuracy: {acc:.4f}")
+def make_dataset(vectorizer, anchor, A, B, y, batch_size=16):
+    anchor_vec = vectorizer(anchor)
+    A_vec = vectorizer(A)
+    B_vec = vectorizer(B)
+
+    ds = tf.data.Dataset.from_tensor_slices((
+        (anchor_vec, A_vec, B_vec),
+        y
+    ))
+
+    ds = ds.batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    return ds
+
+val_ds = make_dataset(vectorize_layer, val_anchor, val_A, val_B, val_y)
+
+model = tf.keras.models.load_model("results/model_ayanre.h5")
+
+loss, acc = model.evaluate(val_ds)
+print("Validation accuracy:", acc)
+print("Validation loss:", loss)
