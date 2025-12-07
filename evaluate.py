@@ -2,7 +2,7 @@
 import torch
 from torch.utils.data import DataLoader
 from data_loader import TrackADataset
-from model_baseline_A import CrossEncoderBERT
+from model_baseline_B import CrossEncoderBERT
 from transformers import AutoTokenizer
 
 def evaluate_model(model_path, val_samples, model_name="bert-base-uncased"):
