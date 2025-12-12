@@ -1,4 +1,4 @@
-# data_loader.py
+# ---- FILE: dataloader.py ----
 import json
 import random
 import torch
@@ -30,15 +30,12 @@ class TrackADataset(Dataset):
         label = torch.tensor(int(s["text_a_is_closer"]), dtype=torch.long)
         return enc_a, enc_b, label
 
-
-def load_and_split_data(path, split_ratio=0.9):
+def load_and_split_data(path, train_ratio=0.8):
     with open(path, "r", encoding="utf8") as f:
         samples = [json.loads(line) for line in f]
-
     random.shuffle(samples)
-    split_idx = int(split_ratio * len(samples))
+    split_idx = int(train_ratio * len(samples))
     train_samples = samples[:split_idx]
     val_samples = samples[split_idx:]
-
-    print(f"Train samples: {len(train_samples)}, Validation samples: {len(val_samples)}")
+    print(f"Train: {len(train_samples)} Val: {len(val_samples)}")
     return train_samples, val_samples
