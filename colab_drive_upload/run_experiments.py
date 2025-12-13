@@ -7,7 +7,6 @@ import json
 from collections import Counter
 from tqdm import tqdm
 import numpy as np
-import pandas as pd
 
 import torch
 import torch.nn as nn
@@ -16,6 +15,9 @@ from torch.optim import AdamW
 from torch.amp import GradScaler, autocast
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from sklearn.metrics import accuracy_score
+import pandas as pd
+from dataset import TrackADataset
+
 
 from model_proposed import PromptTunedBERT
 
@@ -29,32 +31,25 @@ class TrackADataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.samples)
 
-    def _safe_text(self, value):
-        if value is None or str(value).strip() == "":
-            return "[NO TEXT]"
-        return str(value).strip()
-
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        text_a = self._safe_text(sample.get("text_a"))
-        text_b = self._safe_text(sample.get("text_b"))
 
         enc_a = self.tokenizer(
-            text=text_a,
+            sample['text_a'],
             truncation=True,
-            padding="max_length",
+            padding='max_length',
             max_length=self.max_len,
-            return_tensors="pt"
+            return_tensors='pt'
         )
         enc_b = self.tokenizer(
-            text=text_b,
+            sample['text_b'],
             truncation=True,
-            padding="max_length",
+            padding='max_length',
             max_length=self.max_len,
-            return_tensors="pt"
+            return_tensors='pt'
         )
 
-        label = int(sample.get("text_a_is_closer", 0))
+        label = int(sample['text_a_is_closer'])
         enc_a = {k: v.squeeze(0) for k, v in enc_a.items()}
         enc_b = {k: v.squeeze(0) for k, v in enc_b.items()}
 
@@ -68,11 +63,12 @@ def load_and_split_data(file_path, split_ratio=0.8, seed=42):
     random.seed(seed)
     random.shuffle(samples)
     split = int(len(samples) * split_ratio)
-    return samples[:split], samples[split:]
+    train_samples = samples[:split]
+    val_samples = samples[split:]
+    return train_samples, val_samples
 
 def save_history(history, outdir):
-    df = pd.DataFrame(history)
-    df.to_csv(os.path.join(outdir, "train_history.csv"), index=False)
+    pd.DataFrame(history).to_csv(os.path.join(outdir, "train_history.csv"), index=False)
 
 # ---------------- Training ----------------
 def set_seed(seed=42):
@@ -102,32 +98,25 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
     train_samples, val_samples = load_and_split_data(args.data, split_ratio=0.8)
+    print(f"Train: {len(train_samples)} Val: {len(val_samples)}")
+    print("Label counts (train):", Counter(int(s['text_a_is_closer']) for s in train_samples))
 
-    print(f"Train: {len(train_samples)} | Val: {len(val_samples)}")
-    print("Label counts (train):", Counter(int(s.get("text_a_is_closer", 0)) for s in train_samples))
-
-    train_dataset = TrackADataset(train_samples, tokenizer, args.max_len)
-    val_dataset = TrackADataset(val_samples, tokenizer, args.max_len)
+    train_dataset = TrackADataset(train_samples, tokenizer, max_len=args.max_len)
+    val_dataset = TrackADataset(val_samples, tokenizer, max_len=args.max_len)
 
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False)
 
-    model = PromptTunedBERT(
-        model_name="bert-base-uncased",
-        prompt_len=args.prompt_len,
-        freeze_backbone=False,
-        dropout=0.3
-    ).to(device)
+    model = PromptTunedBERT(model_name="bert-base-uncased", prompt_len=args.prompt_len, freeze_backbone=False, dropout=0.3)
+    model.to(device)
 
     optimizer = AdamW(model.parameters(), lr=args.lr)
     total_steps = args.epochs * len(train_loader)
     scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(0.1 * total_steps),
-        num_training_steps=total_steps
+        optimizer, num_warmup_steps=int(0.1*total_steps), num_training_steps=total_steps
     )
 
-    scaler = GradScaler(enabled=device.type == "cuda")
+    scaler = GradScaler(enabled=device.type=="cuda")
     criterion = nn.CrossEntropyLoss()
 
     best_val = 0.0
@@ -137,7 +126,9 @@ def main():
     for epoch in range(1, args.epochs + 1):
         model.train()
         running_loss = 0.0
-        for step, (enc_a, enc_b, label) in enumerate(tqdm(train_loader, desc=f"Epoch {epoch}"), 1):
+        pbar = tqdm(enumerate(train_loader, 1), total=len(train_loader), desc=f"Epoch {epoch}")
+
+        for step, (enc_a, enc_b, label) in pbar:
             enc_a = {k: v.to(device) for k, v in enc_a.items()}
             enc_b = {k: v.to(device) for k, v in enc_b.items()}
             label = label.to(device)
@@ -147,7 +138,9 @@ def main():
                 loss = criterion(logits, label) / args.grad_accum
 
             scaler.scale(loss).backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            # Gradient clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
 
             if step % args.grad_accum == 0:
                 scaler.step(optimizer)
@@ -155,14 +148,15 @@ def main():
                 optimizer.zero_grad()
                 scheduler.step()
 
-            running_loss += loss.item() * args.grad_accum
+            running_loss += float(loss.item() * args.grad_accum)
+            pbar.set_postfix({"loss": running_loss / step})
 
         avg_train_loss = running_loss / len(train_loader)
 
         # Validation
         model.eval()
-        y_true, y_pred = [], []
-        val_loss_total = 0.0
+        all_y, all_pred = [], []
+        val_running_loss = 0.0
         with torch.no_grad():
             for enc_a, enc_b, label in val_loader:
                 enc_a = {k: v.to(device) for k, v in enc_a.items()}
@@ -170,39 +164,37 @@ def main():
                 label = label.to(device)
 
                 logits = model(enc_a, enc_b)
-                val_loss_total += float(criterion(logits, label))
+                loss = criterion(logits, label)
+                val_running_loss += float(loss.item())
+
                 pred = torch.argmax(logits, dim=1)
+                all_y.append(int(label.item()))
+                all_pred.append(int(pred.item()))
 
-                y_true.append(label.item())
-                y_pred.append(pred.item())
+        val_acc = accuracy_score(all_y, all_pred)
+        val_loss = val_running_loss / len(val_loader)
 
-        val_acc = accuracy_score(y_true, y_pred)
-        val_loss = val_loss_total / len(val_loader)
-        print(f"Epoch {epoch} | Train Loss: {avg_train_loss:.4f} | Val Loss: {val_loss:.4f} | Val Acc: {val_acc:.4f}")
-
-        history.append({
-            "epoch": epoch,
-            "train_loss": avg_train_loss,
-            "val_loss": val_loss,
-            "val_acc": val_acc
-        })
+        print(f"Epoch {epoch}: train_loss={avg_train_loss:.4f}, val_loss={val_loss:.4f}, val_acc={val_acc:.4f}")
+        history.append({"epoch": epoch, "train_loss": avg_train_loss, "val_loss": val_loss, "val_acc": val_acc})
         save_history(history, args.outdir)
 
-        # Save best model
+        # Save best
         if val_acc > best_val:
             best_val = val_acc
-            torch.save(model.state_dict(), os.path.join(args.outdir, "best_model.pt"))
+            ckpt_path = os.path.join(args.outdir, "best_model.pt")
+            torch.save(model.state_dict(), ckpt_path)
+            print(f"Saved best model: {ckpt_path} with val_acc={best_val:.4f}")
             no_improve = 0
-            print(f"Saved best model with Val Acc: {best_val:.4f}")
         else:
             no_improve += 1
 
+        # Early stopping
         if no_improve >= args.early_stop:
-            print("Early stopping triggered.")
+            print(f"No improvement for {args.early_stop} epochs. Early stopping.")
             break
 
-    print("Training complete. Best Val Acc:", best_val)
-    print("Results & history saved at:", args.outdir)
+    print("Final validation accuracy (best):", best_val)
+    print("Done. Results at:", args.outdir)
 
 if __name__ == "__main__":
     main()
