@@ -7,7 +7,6 @@ The goal of this EDA is to understand the structure, distribution, and character
 
 * **Muhammad Murtaza (503477)** — [mmurtaza.bscs24seecs@seecs.edu.pk](mailto:mmurtaza.bscs24seecs@seecs.edu.pk)
 * **Ayan Ur Rehman (518151)** — [arehman.bscs24seecs@seecs.edu.pk](mailto:arehman.bscs24seecs@seecs.edu.pk)
-* **Mahnoor Khokhar (500833)** — [mkhokhar.bscs24seecs@seecs.edu.pk](mailto:mkhokhar.bscs24seecs@seecs.edu.pk)
 * **Hammad Asim Kayani (513776)** — [hkayani.bscs24seecs@seecs.edu.pk](mailto:hkayani.bscs24seecs@seecs.edu.pk)
 
 **Department of Computer Science, NUST SEECS**
